@@ -6,7 +6,13 @@ from fastapi import FastAPI, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import traceback
-
+from fastapi.responses import RedirectResponse
+from fastapi import Request, Form, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Form, Request, status
+from fastapi.responses import RedirectResponse
+from sqlalchemy import create_engine, Column, Integer, String
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 from llmx import llm, providers
 from ..datamodel import GoalWebRequest, SummaryUrlRequest, TextGenerationConfig, UploadUrl, VisualizeEditWebRequest, VisualizeEvalWebRequest, VisualizeExplainWebRequest, VisualizeRecommendRequest, VisualizeRepairWebRequest, VisualizeWebRequest, InfographicsRequest
 from ..components import Manager
@@ -16,6 +22,11 @@ from ..components import Manager
 textgen = llm()
 logger = logging.getLogger("lida")
 api_docs = os.environ.get("LIDA_API_DOCS", "False") == "True"
+
+
+HUBSPOT_CLIENT_ID = '3fd82bfc-3e0a-4707-bb7c-6e4d5995d989'
+HUBSPOT_CLIENT_SECRET = '028b7d9e-6a60-4a8d-8cdd-62c3aad573c9'  
+HUBSPOT_REDIRECT_URI = 'http://localhost:8080/callback'
 
 
 lida = Manager(text_gen=textgen)
@@ -47,6 +58,52 @@ api.mount("/files", StaticFiles(directory=files_static_root, html=True), name="f
 
 
 # def check_model
+@app.get("/login")
+async def login():
+    """Redirect user to HubSpot for authorization."""
+    hubspot_auth_url = (
+        f"https://app.hubspot.com/oauth/authorize?client_id={HUBSPOT_CLIENT_ID}"
+        f"&redirect_uri={HUBSPOT_REDIRECT_URI}&scope=crm.objects.contacts.write%20"
+        "crm.schemas.contacts.write%20oauth%20crm.schemas.contacts.read%20"
+        "crm.objects.contacts.read"
+    )
+    return RedirectResponse(url=hubspot_auth_url)
+
+@app.get("/callback")
+async def callback(request: Request):
+    """Handle the HubSpot OAuth callback."""
+    code = request.query_params.get('code')
+    if not code:
+        raise HTTPException(status_code=400, detail="Authorization failed: No code provided")
+
+    token_url = 'https://api.hubapi.com/oauth/v1/token'
+    
+    data = {
+        'grant_type': 'authorization_code',
+        'client_id': HUBSPOT_CLIENT_ID,
+        'client_secret': HUBSPOT_CLIENT_SECRET,
+        'redirect_uri': HUBSPOT_REDIRECT_URI,
+        'code': code
+    }
+    
+    response = requests.post(token_url, data=data)
+    
+    if response.status_code == 200:
+        tokens = response.json()
+        access_token = tokens['access_token']
+
+        request.session['access_token'] = tokens['access_token']
+    #     return {"status": "Authorization successful", "access_token": access_token}
+    
+    # logger.error(f"Authorization failed: {response.text}")
+    # return {"status": "Authorization failed", "response": response.text}, 400
+        return RedirectResponse(url='/')  # Handle token storage here
+    raise HTTPException(status_code=400, detail="Authorization failed")
+
+    #     return RedirectResponse(url="http://localhost:8080/")
+    
+    # raise HTTPException(status_code=400, detail="Authorization failed")
+
 
 @api.post("/visualize")
 async def visualize_data(req: VisualizeWebRequest) -> dict:
